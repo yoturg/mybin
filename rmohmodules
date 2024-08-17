@@ -1,0 +1,15 @@
+#!/bin/bash
+
+# 解决oh-package.json5中形如 ^1.0.16 的依赖无法自动更新最新依赖的版本的问题
+# （^符号表示“次版本和补丁版本可增”，即向后兼容，需删除所有oh-package-lock.json5才可重新生成最新版本）
+# 运行方法：右键此脚本直接run即可
+
+# 删除当前目录及其一级和二级子目录中的所有 oh-package-lock.json5 文件
+find . -maxdepth 2 -name "oh-package-lock.json5" -exec rm {} \;
+
+echo "所有一级和二级目录下的 oh-package-lock.json5 文件已删除。"
+
+# 删除当前目录及其一级和二级子目录中名为 oh_module 的目录及其内容
+find . -maxdepth 2 -type d -name "oh_modules" -exec rm -rf {} +
+
+echo "所有一级和二级目录下的 oh_modules 目录已删除。"
