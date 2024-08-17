@@ -76,7 +76,7 @@ if [ -f "package.json" ]; then
 
     set_package_version @jdtaro/plugin-platform-jdharmony-cpp $lasterJdTaroCppVersion
 
-  # fi
+  fi
 else
   echo "当前目录下没有package.json文件"
 fi

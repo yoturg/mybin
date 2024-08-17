@@ -13,3 +13,8 @@ echo "所有一级和二级目录下的 oh-package-lock.json5 文件已删除。
 find . -maxdepth 2 -type d -name "oh_modules" -exec rm -rf {} +
 
 echo "所有一级和二级目录下的 oh_modules 目录已删除。"
+
+# 删除当前目录及其一级和二级子目录中名为 build 的目录及其内容
+find . -maxdepth 2 -type d -name "build" -exec rm -rf {} +
+
+echo "所有一级和二级目录下的 build 目录已删除。"
