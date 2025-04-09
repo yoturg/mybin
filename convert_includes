@@ -1,0 +1,93 @@
+#!/bin/bash
+
+# 检查是否提供了参数
+if [ $# -ne 1 ]; then
+    echo "Usage: $0 <file or directory>"
+    exit 1
+fi
+
+input="$1"
+
+# 检查输入路径是否存在
+if [ ! -e "$input" ]; then
+    echo "Path $input does not exist"
+    exit 1
+fi
+
+# 转换函数：将下划线分隔的名称转换为驼峰命名
+to_camel_case() {
+    echo "$1" | awk 'BEGIN{FS="_";OFS=""} {
+        for(i=1;i<=NF;i++){
+            $i=toupper(substr($i,1,1)) substr($i,2)
+        }
+        print
+    }'
+}
+
+# 处理单个文件的函数
+process_single_file() {
+    local file="$1"
+    
+    # 跳过非文本文件
+    if ! file "$file" | grep -q "text"; then
+        echo "Skipping non-text file: $file"
+        return
+    fi
+    
+    echo "Processing file: $file"
+    
+    # 创建临时文件
+    local temp_file=$(mktemp)
+    
+    while IFS= read -r line || [ -n "$line" ]; do
+        if [[ $line =~ ^[[:space:]]*#include ]]; then
+            # 提取include的文件名部分
+            prefix=$(echo "$line" | sed -E 's/(.*#include[[:space:]]*[<"])(.*)(>|")/\1/')
+            filename=$(echo "$line" | sed -E 's/(.*#include[[:space:]]*[<"])(.*)(>|")/\2/')
+            suffix=$(echo "$line" | sed -E 's/(.*#include[[:space:]]*[<"])(.*)(>|")/\3/')
+            
+            if [[ $filename == *"_"* ]]; then
+                # 转换文件名为驼峰命名
+                new_filename=$(to_camel_case "$filename")
+                echo "${prefix}${new_filename}${suffix}" >> "$temp_file"
+            else
+                echo "$line" >> "$temp_file"
+            fi
+        else
+            echo "$line" >> "$temp_file"
+        fi
+    done < "$file"
+    
+    # 备份原文件
+    # cp "$file" "${file}.bak"
+    
+    # 将处理后的内容移回原文件
+    mv "$temp_file" "$file"
+    
+    # echo "Completed processing: $file (backup saved as ${file}.bak)"
+    echo "Completed processing: $file ."
+}
+
+# 处理目录中的所有文件
+process_directory() {
+    local dir="$1"
+    local file
+    
+    # 查找所有文件并处理
+    while IFS= read -r -d '' file; do
+        if file "$file" | grep -q "text"; then
+            process_single_file "$file"
+        fi
+    done < <(find "$dir" -type f ! -path "*.git/*" ! -name "*.bak" ! -name "*.swp" ! -name "*.swo" -print0)
+}
+
+# 主处理逻辑
+if [ -f "$input" ]; then
+    # 如果输入是文件，直接处理
+    process_single_file "$input"
+elif [ -d "$input" ]; then
+    # 如果输入是目录，递归处理所有文件
+    process_directory "$input"
+fi
+
+echo "All processing completed."

@@ -1,0 +1,50 @@
+#!/bin/bash
+
+# 检查是否提供了目录参数
+if [ $# -ne 1 ]; then
+    echo "Usage: $0 <directory>"
+    exit 1
+fi
+
+directory="$1"
+
+# 检查目录是否存在
+if [ ! -d "$directory" ]; then
+    echo "Directory $directory does not exist"
+    exit 1
+fi
+
+# 转换函数：将下划线分隔的名称转换为驼峰命名
+to_camel_case() {
+    echo "$1" | awk 'BEGIN{FS="_";OFS=""} {
+        for(i=1;i<=NF;i++){
+            $i=toupper(substr($i,1,1)) substr($i,2)
+        }
+        print
+    }'
+}
+
+# 递归处理目录
+process_directory() {
+    local dir="$1"
+    local old_name
+    local new_name
+    
+    # 遍历目录中的所有项目
+    find "$dir" -depth -name "*_*" | while read -r path; do
+        old_name=$(basename "$path")
+        new_name=$(to_camel_case "$old_name")
+        
+        if [ "$old_name" != "$new_name" ]; then
+            directory=$(dirname "$path")
+            if mv "$path" "$directory/$new_name"; then
+                echo "Renamed: $old_name -> $new_name"
+            else
+                echo "Failed to rename: $path"
+            fi
+        fi
+    done
+}
+
+# 执行转换
+process_directory "$directory"
