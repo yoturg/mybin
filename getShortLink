@@ -1,0 +1,42 @@
+#!/usr/bin/env node
+
+// 获取命令行参数
+const realUrl = process.argv[2]; // 第一个参数是 node, 第二个是脚本路径, 第三个才是我们的入参
+
+if (!realUrl) {
+  console.error('请提供需要缩短的URL');
+  process.exit(1);
+}
+
+async function shortenUrl(url) {
+  try {
+    const response = await fetch('https://api.m.jd.com/api', {
+      method: 'POST',
+      credentials: 'include',
+      mode: 'cors',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded'
+      },
+      body: new URLSearchParams({
+        appid: 'publicUseApi',
+        functionId: 'generateURLFastest',
+        body: JSON.stringify({
+          domain: '3.cn',
+          length: 8,
+          realUrl: url,
+          key: 'e637c3be497204fe4ae1580cabb04249',
+          expiredDays: 30
+        })
+      })
+    });
+
+    const data = await response.json();
+    console.log(data);
+    process.exit(0);
+  } catch (error) {
+    console.error('Error:', error);
+    process.exit(1);
+  }
+}
+
+shortenUrl(realUrl);
