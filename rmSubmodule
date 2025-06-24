@@ -1,0 +1,107 @@
+#!/bin/bash
+
+# Submodule 完全删除脚本
+# 用法: ./bin/rm-submodule.sh <submodule-path>
+
+set -e  # 遇到错误立即退出
+
+# 检查参数
+if [ $# -eq 0 ]; then
+    echo "错误: 请提供 submodule 路径"
+    echo "用法: $0 <submodule-path>"
+    echo "示例: $0 examples/cart"
+    exit 1
+fi
+
+SUBMODULE_PATH="$1"
+
+echo "开始删除 submodule: $SUBMODULE_PATH"
+
+# 检查 submodule 是否存在
+if ! git config -f .gitmodules --get "submodule.$SUBMODULE_PATH.path" > /dev/null 2>&1; then
+    echo "警告: submodule '$SUBMODULE_PATH' 在 .gitmodules 中未找到"
+else
+    echo "✓ 在 .gitmodules 中找到 submodule: $SUBMODULE_PATH"
+fi
+
+# 步骤 1: 从 .gitmodules 中删除 submodule 配置
+echo "步骤 1: 从 .gitmodules 中删除配置..."
+if git config -f .gitmodules --remove-section "submodule.$SUBMODULE_PATH" 2>/dev/null; then
+    echo "✓ 成功从 .gitmodules 中删除配置"
+else
+    echo "⚠ .gitmodules 中未找到配置或已删除"
+fi
+
+# 步骤 2: 从 git config 中删除 submodule 配置
+echo "步骤 2: 从 git config 中删除配置..."
+if git config --remove-section "submodule.$SUBMODULE_PATH" 2>/dev/null; then
+    echo "✓ 成功从 git config 中删除配置"
+else
+    echo "⚠ git config 中未找到配置或已删除"
+fi
+
+# 步骤 3: 删除 .git/modules 中的 submodule 目录
+echo "步骤 3: 删除 .git/modules 中的 submodule 目录..."
+if [ -d ".git/modules/$SUBMODULE_PATH" ]; then
+    rm -rf ".git/modules/$SUBMODULE_PATH"
+    echo "✓ 成功删除 .git/modules/$SUBMODULE_PATH"
+else
+    echo "⚠ .git/modules/$SUBMODULE_PATH 目录不存在或已删除"
+fi
+
+# 步骤 4: 从 git 索引中删除 submodule（如果存在）
+echo "步骤 4: 从 git 索引中删除 submodule..."
+if git ls-files --stage "$SUBMODULE_PATH" > /dev/null 2>&1; then
+    # 先暂存 .gitmodules 的更改
+    git add .gitmodules 2>/dev/null || true
+    # 然后删除 submodule
+    git rm --cached "$SUBMODULE_PATH" 2>/dev/null || true
+    echo "✓ 成功从 git 索引中删除 $SUBMODULE_PATH"
+else
+    echo "⚠ $SUBMODULE_PATH 不在 git 索引中或已删除"
+fi
+
+# 步骤 5: 删除 submodule 目录
+echo "步骤 5: 删除 submodule 目录..."
+if [ -d "$SUBMODULE_PATH" ]; then
+    rm -rf "$SUBMODULE_PATH"
+    echo "✓ 成功删除目录 $SUBMODULE_PATH"
+else
+    echo "⚠ 目录 $SUBMODULE_PATH 不存在或已删除"
+fi
+
+# 步骤 6: 添加更改到暂存区
+echo "步骤 6: 添加更改到暂存区..."
+git add .gitmodules 2>/dev/null || true
+
+# 步骤 7: 显示当前状态
+echo "步骤 7: 显示当前 git 状态..."
+echo "=== Git 状态 ==="
+git status --porcelain | grep -E "(\.gitmodules|$SUBMODULE_PATH)" || echo "没有相关的待提交更改"
+
+echo ""
+echo "🎉 Submodule '$SUBMODULE_PATH' 已完全删除！"
+echo ""
+echo "下一步操作建议："
+echo "1. 检查删除结果: git status"
+echo "2. 提交更改: git commit -m \"remove submodule $SUBMODULE_PATH\""
+echo "3. 推送到远程: git push"
+echo ""
+
+# 步骤 8: 验证删除结果
+echo "步骤 8: 验证删除结果..."
+# 检查 .gitmodules 中是否还有该 submodule 的配置
+if git config -f .gitmodules --get "submodule.$SUBMODULE_PATH.path" > /dev/null 2>&1; then
+    echo "❌ 警告: .gitmodules 中仍然存在 submodule 配置，删除可能不完整"
+    exit 1
+# 检查目录是否还存在
+elif [ -d "$SUBMODULE_PATH" ]; then
+    echo "❌ 警告: submodule 目录仍然存在，删除可能不完整"
+    exit 1
+# 检查 .git/modules 目录是否还存在  
+elif [ -d ".git/modules/$SUBMODULE_PATH" ]; then
+    echo "❌ 警告: .git/modules 中仍然存在 submodule 数据，删除可能不完整"
+    exit 1
+else
+    echo "✅ 验证成功: submodule 已完全删除"
+fi 
