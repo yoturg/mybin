@@ -48,6 +48,10 @@ lasterJdTaroCppVersion=$(npm view @jdtaro/plugin-platform-jdharmony-cpp version 
 output=$(ohpm info @jd-oh/taro_cpp_library --registry=http://ohpm.jd.com/repos/ohpm/)
 lasterTaroCppLibraryVersion=$(echo "$output" | grep -oE 'latest.+' | grep -oE '0\..+')
 
+output=$(ohpm info @jd-oh/taro_cpp_library_v8 --registry=http://ohpm.jd.com/repos/ohpm/)
+lasterTaroCppLibraryV8Version=$(echo "$output" | grep -oE 'latest.+' | grep -oE '0\..+')
+
+
 echo "最新版本号为："
 if [[ $lasterTaroVersion ]]; then
   echo "  @tarojs/*: $lasterTaroVersion"
@@ -63,5 +67,10 @@ fi
 
 if [[ $lasterTaroCppLibraryVersion ]]; then
   echo "  @jd-oh/taro_cpp_library: $lasterTaroCppLibraryVersion"
+fi
+
+
+if [[ $lasterTaroCppLibraryV8Version ]]; then
+  echo "  @jd-oh/taro_cpp_library_v8: $lasterTaroCppLibraryV8Version"
 fi
 
