@@ -1,0 +1,100 @@
+#!/usr/bin/env node
+
+const fs = require('fs')
+const path = require('path')
+
+function collectTarojsApi(code) {
+  return code 
+}
+
+
+
+/**
+ * 处理 TypeScript 文件
+ * @param {string} filePath - TypeScript 文件的路径
+ */
+function processTypeScriptFile(filePath) {
+  try {
+    // 读取文件内容为字符串
+    const content = fs.readFileSync(filePath, 'utf-8')
+
+    // TODO: 在这里添加你的处理逻辑
+    console.log(`处理文件: ${filePath}`)
+
+    const res = collectTarojsApi(content)
+    console.log(typeof res === 'string' ? res : JSON.stringify(res, null, 2))
+  } catch (error) {
+    console.error(`处理文件 ${filePath} 时出错:`, error.message)
+  }
+}
+
+/**
+ * 递归读取目录下的所有 TypeScript 文件
+ * @param {string} dirPath - 目录路径
+ */
+function processDirectory(dirPath) {
+  try {
+    const files = fs.readdirSync(dirPath)
+
+    files.forEach((file) => {
+      const fullPath = path.join(dirPath, file)
+      const stat = fs.statSync(fullPath)
+
+      if (stat.isDirectory()) {
+        // 递归处理子目录
+        processDirectory(fullPath)
+      } else if (stat.isFile() && file.endsWith('.ts')) {
+        // 处理 TypeScript 文件
+        processTypeScriptFile(fullPath)
+      }
+    })
+  } catch (error) {
+    console.error(`读取目录 ${dirPath} 时出错:`, error.message)
+  }
+}
+
+/**
+ * 主函数
+ * @param {string} inputPath - 输入路径（文件或目录）
+ */
+function main(inputPath) {
+  if (!inputPath) {
+    console.error('错误: 请提供一个路径参数')
+    console.log('用法: node replace.js <路径>')
+    process.exit(1)
+  }
+
+  try {
+    // 检查路径是否存在
+    if (!fs.existsSync(inputPath)) {
+      console.error(`错误: 路径不存在 - ${inputPath}`)
+      process.exit(1)
+    }
+
+    const stat = fs.statSync(inputPath)
+
+    if (stat.isDirectory()) {
+      // 处理目录
+      console.log(`处理目录: ${inputPath}`)
+      processDirectory(inputPath)
+    } else if (
+      stat.isFile() &&
+      (inputPath.endsWith('.ts') || inputPath.endsWith('.js'))
+    ) {
+      // 处理单个 TypeScript 文件
+      console.log(`处理单个文件: ${inputPath}`)
+      processTypeScriptFile(inputPath)
+    } else {
+      console.log(`跳过: ${inputPath} (不是目录或 .ts/.js 文件)`)
+    }
+
+    console.log('处理完成!')
+  } catch (error) {
+    console.error('发生错误:', error.message)
+    process.exit(1)
+  }
+}
+
+// 获取命令行参数
+const inputPath = process.argv[2]
+main(inputPath)
