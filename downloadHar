@@ -1,0 +1,36 @@
+#!/bin/bash
+
+# 检查参数数量
+if [ $# -ne 2 ]; then
+    echo "错误: 需要两个参数"
+    echo "用法: $0 <包名> <版本号>"
+    echo "示例: $0 taro_cpp_library_v8 1.6.0-alpha.13"
+    exit 1
+fi
+
+# 获取参数
+PACKAGE_NAME=$1
+VERSION=$2
+
+# 拼接下载链接
+URL="http://ohpm.jd.com/ohpm/${PACKAGE_NAME}/-/${PACKAGE_NAME}-${VERSION}.har"
+
+# 输出下载信息
+echo "正在下载包: ${PACKAGE_NAME}"
+echo "版本: ${VERSION}"
+echo "下载地址: ${URL}"
+echo "-----------------------------------"
+
+# 使用curl下载文件到当前目录
+curl -O "${URL}"
+
+# 检查下载结果
+if [ $? -eq 0 ]; then
+    echo "-----------------------------------"
+    echo "下载成功! 文件已保存到当前目录"
+    echo "文件名: @jd-oh/${PACKAGE_NAME}-${VERSION}.har"
+else
+    echo "-----------------------------------"
+    echo "下载失败! 请检查网络连接和参数是否正确"
+    exit 1
+fi
