@@ -1,0 +1,91 @@
+# >>>>>> claude
+# 第三方api
+# export ANTHROPIC_BASE_URL="https://api.poe.com"
+# export ANTHROPIC_AUTH_TOKEN="1dTZ2UNmuMOVBwnGcV9jPsVBCSp7OfSJQ2joGROR3hI"
+# export ANTHROPIC_API_KEY="" # Important: Must be explicitly empty
+# 全局命令入
+export PATH="${HOME}/.local/bin:$PATH"
+
+
+# >>>>>> opencode
+export PATH=/Users/mayintao3/.opencode/bin:$PATH
+
+# >>>>>> nvm
+export NVM_DIR="$([ -z "${XDG_CONFIG_HOME-}" ] && printf %s "${HOME}/.nvm" || printf %s "${XDG_CONFIG_HOME}/nvm")"
+[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh" # This loads nvm
+
+# >>>>>> llvm 
+export LDFLAGS="-L/opt/homebrew/opt/llvm/lib"
+export CPPFLAGS="-I/opt/homebrew/opt/llvm/include"
+export CMAKE_PREFIX_PATH="/opt/homebrew/opt/llvm"
+
+# >>>>>> homebrew
+export PATH="/usr/local/bin:$PATH"
+eval "$(/opt/homebrew/bin/brew shellenv)"
+
+# HDC_SERVER_PORT=7035
+# launchctl setenv HDC_SERVER_PORT $HDC_SERVER_PORT
+# export HDC_SERVER_PORT
+HDC_SDK_PATH="/Applications/DevEco-Studio.app/Contents/sdk/default/openharmony/toolchains"
+HOS_SDK_HOME="/Applications/DevEco-Studio.app/Contents/sdk"
+export OHPM_HOME="/Applications/DevEco-Studio.app/Contents/tools/ohpm"
+export PATH="$OHPM_HOME/bin:$PATH"
+launchctl setenv HDC_SDK_PATH $HDC_SDK_PATH 
+export PATH=$PATH:$HDC_SDK_PATH
+export RNOH_C_API_ARCH=1
+export HARMONY_WORKSPACE="/Users/mayintao3/Workspace/harmony"
+
+# >>>>> rust
+. "$HOME/.cargo/env"
+
+# >>>>> mybin
+export PATH="${HOME}/.mybin:$PATH"
+
+# >>>>> zsh-autosuggestions(命令行提示)
+source /opt/homebrew/share/zsh-autosuggestions/zsh-autosuggestions.zsh
+
+# >>>>> zsh-syntax-highlighting (命令行语法高亮)
+export ZSH_HIGHLIGHT_HIGHLIGHTERS_DIR=/opt/homebrew/share/zsh-syntax-highlighting/highlighters
+
+# >>>>> conda initialize 
+__conda_setup="$('/Users/mayintao3/miniforge3/bin/conda' 'shell.zsh' 'hook' 2> /dev/null)"
+if [ $? -eq 0 ]; then
+    eval "$__conda_setup"
+else
+    if [ -f "/Users/mayintao3/miniforge3/etc/profile.d/conda.sh" ]; then
+        . "/Users/mayintao3/miniforge3/etc/profile.d/conda.sh"
+    else
+        export PATH="/Users/mayintao3/miniforge3/bin:$PATH"
+    fi
+fi
+unset __conda_setup
+
+
+# >>>>> homebrew清华源
+export HOMEBREW_BOTTLE_DOMAIN=https://mirrors.ustc.edu.cn/homebrew-bottles
+eval "$(pyenv init -)"
+if which pyenv-virtualenv-init >/dev/null; then eval "$(pyenv virtualenv-init -)"; fi
+
+
+# >>>>> llvm
+export PATH="$(brew --prefix llvm)/bin:$PATH"
+
+# >>>>> Android SDK platform-tools
+export ANDROID_HOME=$HOME/Library/Android/sdk
+export JAVA_HOME="/Library/Java/JavaVirtualMachines/zulu-17.jdk/Contents/Home/"
+export PATH=$PATH:$ANDROID_HOME/emulator
+export PATH=$PATH:$ANDROID_HOME/tools
+export PATH=$PATH:$ANDROID_HOME/tools/bin
+export PATH=$PATH:$ANDROID_HOME/platform-tools
+export PATH="/opt/homebrew/opt/ccache/libexec:$PATH"
+
+# >>>>>> curl
+# 给命令行调用
+export PATH="/opt/homebrew/opt/curl/bin:$PATH"
+# 给编译器调用
+export LDFLAGS="-L/opt/homebrew/opt/curl/lib"
+export CPPFLAGS="-I/opt/homebrew/opt/curl/include"
+
+
+# 命令行代理
+# export https_proxy=http://127.0.0.1:7897 http_proxy=http://127.0.0.1:7897 all_proxy=socks5://127.0.0.1:7897
