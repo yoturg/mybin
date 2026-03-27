@@ -1,4 +1,4 @@
-export ZSH="/Users/mayintao3/.oh-my-zsh"
+export ZSH="$HOME/.oh-my-zsh"
 
 ZSH_THEME="powerlevel9k/powerlevel9k"
 function sp {
@@ -85,6 +85,13 @@ POWERLEVEL9K_VCS_UNTRACKED_BACKGROUND='clear'
 POWERLEVEL9K_VCS_UNTRACKED_FOREGROUND='green'
 
 
+
+plugins=(
+  git
+  z
+  brew
+  macos
+)
 
 source $ZSH/oh-my-zsh.sh
 
