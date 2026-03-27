@@ -85,7 +85,6 @@ POWERLEVEL9K_VCS_UNTRACKED_BACKGROUND='clear'
 POWERLEVEL9K_VCS_UNTRACKED_FOREGROUND='green'
 
 
-plugins=(git)
 
 source $ZSH/oh-my-zsh.sh
 
