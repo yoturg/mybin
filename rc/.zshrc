@@ -90,6 +90,8 @@ plugins=(
   git
   z
   brew
+  sudo
+  colored-man-pages
   macos
 )
 
