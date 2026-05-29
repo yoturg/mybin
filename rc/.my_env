@@ -1,7 +1,7 @@
 # >>>>>> claude
 # 第三方api
-# export ANTHROPIC_BASE_URL="https://api.poe.com"
-# export ANTHROPIC_AUTH_TOKEN="1dTZ2UNmuMOVBwnGcV9jPsVBCSp7OfSJQ2joGROR3hI"
+# export ANTHROPIC_BASE_URL="https://token-plan-cn.xiaomimimo.com/anthropic"
+# export ANTHROPIC_AUTH_TOKEN="tp-cciqyncuopiequd5odqus77whxo27ejwmbz76pg8g5wb4jg3"
 # export ANTHROPIC_API_KEY="" # Important: Must be explicitly empty
 # 全局命令入
 export PATH="${HOME}/.local/bin:$PATH"
