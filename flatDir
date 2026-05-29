@@ -1,0 +1,411 @@
+#!/usr/bin/env node
+
+const fs = require('fs');
+const path = require('path');
+
+/**
+ * 展平目录结构
+ * @param {string} targetDir - 目标目录路径
+ * @param {number} depth - 展平深度，类似 Array.flat(depth)，支持负数从末端展平
+ * @param {boolean} dryRun - 是否为试运行模式
+ */
+function flattenDirectory(targetDir, depth = 1, dryRun = false) {
+  if (!fs.existsSync(targetDir)) {
+    console.error(`错误: 目录不存在: ${targetDir}`);
+    process.exit(1);
+  }
+
+  if (!fs.statSync(targetDir).isDirectory()) {
+    console.error(`错误: 路径不是目录: ${targetDir}`);
+    process.exit(1);
+  }
+
+  const absTargetDir = path.resolve(targetDir);
+  console.log(`目标目录: ${absTargetDir}`);
+  console.log(`展平深度: ${depth === Infinity ? 'Infinity' : depth}`);
+  console.log(`模式: ${dryRun ? '试运行（不会实际移动文件）' : '执行模式'}`);
+  if (depth === -1) {
+    console.log(`说明: -1 表示只展平叶子目录（没有子目录的目录）`);
+  }
+  console.log('-----------------------------------');
+
+  let operationCount = 0;
+
+  /**
+   * 获取唯一的目标路径（处理文件名冲突）
+   */
+  function getUniquePath(targetPath) {
+    if (!fs.existsSync(targetPath)) {
+      return targetPath;
+    }
+
+    const dir = path.dirname(targetPath);
+    const ext = path.extname(targetPath);
+    const baseName = path.basename(targetPath, ext);
+    
+    let counter = 1;
+    let newPath = targetPath;
+    
+    while (fs.existsSync(newPath)) {
+      const newName = `${baseName}_${counter}${ext}`;
+      newPath = path.join(dir, newName);
+      counter++;
+    }
+    
+    return newPath;
+  }
+
+  /**
+   * 从顶部开始递归展平目录（正数深度）
+   */
+  function flattenFromTop(dir, currentDepth = 0) {
+    if (depth !== Infinity && currentDepth >= depth) {
+      return;
+    }
+
+    try {
+      const items = fs.readdirSync(dir);
+
+      for (const item of items) {
+        const itemPath = path.join(dir, item);
+        
+        try {
+          const stat = fs.statSync(itemPath);
+
+          if (stat.isDirectory()) {
+            // 先递归处理子目录
+            flattenFromTop(itemPath, currentDepth + 1);
+
+            // 获取子目录中的所有内容
+            const subItems = fs.readdirSync(itemPath);
+            
+            // 将子目录的内容移动到当前目录
+            for (const subItem of subItems) {
+              const subItemPath = path.join(itemPath, subItem);
+              let targetPath = path.join(dir, subItem);
+              
+              // 处理文件名冲突
+              if (fs.existsSync(targetPath) && targetPath !== subItemPath) {
+                targetPath = getUniquePath(targetPath);
+              }
+
+              if (targetPath !== subItemPath) {
+                const relFrom = path.relative(absTargetDir, subItemPath);
+                const relTo = path.relative(absTargetDir, targetPath);
+                
+                if (!dryRun) {
+                  console.log(`移动: ${relFrom} -> ${relTo}`);
+                  fs.renameSync(subItemPath, targetPath);
+                } else {
+                  console.log(`[试运行] 移动: ${relFrom} -> ${relTo}`);
+                }
+                
+                operationCount++;
+              }
+            }
+
+            // 删除空目录
+            const remainingItems = fs.readdirSync(itemPath);
+            if (remainingItems.length === 0) {
+              const relPath = path.relative(absTargetDir, itemPath);
+              
+              if (!dryRun) {
+                console.log(`删除空目录: ${relPath}`);
+                fs.rmdirSync(itemPath);
+              } else {
+                console.log(`[试运行] 删除空目录: ${relPath}`);
+              }
+            }
+          }
+        } catch (err) {
+          console.error(`处理 ${itemPath} 时出错: ${err.message}`);
+        }
+      }
+    } catch (err) {
+      console.error(`读取目录 ${dir} 时出错: ${err.message}`);
+    }
+  }
+
+
+  /**
+   * 检查目录是否为叶子目录（没有子目录，只有文件）
+   */
+  function isLeafDirectory(dir) {
+    try {
+      const items = fs.readdirSync(dir);
+      
+      for (const item of items) {
+        const itemPath = path.join(dir, item);
+        const stat = fs.statSync(itemPath);
+        
+        if (stat.isDirectory()) {
+          return false; // 有子目录，不是叶子目录
+        }
+      }
+      
+      return items.length > 0; // 有文件且没有子目录
+    } catch (err) {
+      return false;
+    }
+  }
+
+  /**
+   * 收集所有叶子目录
+   */
+  function collectLeafDirectories(dir, leaves = []) {
+    try {
+      const items = fs.readdirSync(dir);
+      let hasSubDir = false;
+
+      for (const item of items) {
+        const itemPath = path.join(dir, item);
+        
+        try {
+          const stat = fs.statSync(itemPath);
+
+          if (stat.isDirectory()) {
+            hasSubDir = true;
+            collectLeafDirectories(itemPath, leaves);
+          }
+        } catch (err) {
+          console.error(`访问 ${itemPath} 时出错: ${err.message}`);
+        }
+      }
+
+      // 如果当前目录有文件但没有子目录，它就是叶子目录
+      if (!hasSubDir && items.length > 0) {
+        leaves.push(dir);
+      }
+    } catch (err) {
+      console.error(`读取目录 ${dir} 时出错: ${err.message}`);
+    }
+
+    return leaves;
+  }
+
+  /**
+   * 从底部展平目录（-1：只展平叶子目录）
+   */
+  function flattenLeafDirectories() {
+    // 收集所有叶子目录
+    const leafDirs = collectLeafDirectories(absTargetDir);
+
+    if (leafDirs.length === 0) {
+      console.log('没有找到叶子目录（没有子目录的目录）');
+      return;
+    }
+
+    console.log(`找到 ${leafDirs.length} 个叶子目录`);
+
+    // 处理每个叶子目录
+    for (const leafDir of leafDirs) {
+      const parentDir = path.dirname(leafDir);
+      
+      // 不要移动根目录的直接子目录
+      if (parentDir === absTargetDir) {
+        continue;
+      }
+
+      try {
+        const files = fs.readdirSync(leafDir);
+
+        for (const file of files) {
+          const filePath = path.join(leafDir, file);
+          const stat = fs.statSync(filePath);
+
+          // 只移动文件，不移动目录
+          if (!stat.isDirectory()) {
+            let targetPath = path.join(parentDir, file);
+
+            // 处理文件名冲突
+            if (fs.existsSync(targetPath) && targetPath !== filePath) {
+              targetPath = getUniquePath(targetPath);
+            }
+
+            const relFrom = path.relative(absTargetDir, filePath);
+            const relTo = path.relative(absTargetDir, targetPath);
+
+            if (!dryRun) {
+              console.log(`移动: ${relFrom} -> ${relTo}`);
+              fs.renameSync(filePath, targetPath);
+            } else {
+              console.log(`[试运行] 移动: ${relFrom} -> ${relTo}`);
+            }
+
+            operationCount++;
+          }
+        }
+      } catch (err) {
+        console.error(`处理叶子目录 ${leafDir} 时出错: ${err.message}`);
+      }
+    }
+
+    // 清理空目录
+    if (!dryRun) {
+      cleanEmptyDirectories(absTargetDir);
+    }
+  }
+
+  /**
+   * 递归清理空目录
+   */
+  function cleanEmptyDirectories(dir) {
+    try {
+      const items = fs.readdirSync(dir);
+
+      for (const item of items) {
+        const itemPath = path.join(dir, item);
+        
+        try {
+          const stat = fs.statSync(itemPath);
+
+          if (stat.isDirectory()) {
+            cleanEmptyDirectories(itemPath);
+            
+            // 检查目录是否为空
+            const remainingItems = fs.readdirSync(itemPath);
+            if (remainingItems.length === 0) {
+              const relPath = path.relative(absTargetDir, itemPath);
+              
+              if (!dryRun) {
+                console.log(`删除空目录: ${relPath}`);
+                fs.rmdirSync(itemPath);
+              } else {
+                console.log(`[试运行] 删除空目录: ${relPath}`);
+              }
+            }
+          }
+        } catch (err) {
+          // 忽略已被删除的目录
+        }
+      }
+    } catch (err) {
+      // 忽略已被删除的目录
+    }
+  }
+
+  // 根据深度选择展平方式
+  if (depth >= 0) {
+    // 正数或零：从顶部展平
+    flattenFromTop(absTargetDir);
+  } else if (depth === -1) {
+    // -1：展平叶子目录
+    flattenLeafDirectories();
+  } else {
+    console.error('错误: 负数深度只支持 -1（展平叶子目录）');
+    process.exit(1);
+  }
+
+  console.log('-----------------------------------');
+  console.log(`完成! 共处理 ${operationCount} 个文件/目录`);
+}
+
+// 解析命令行参数
+function parseArgs() {
+  const args = process.argv.slice(2);
+  
+  if (args.includes('-h') || args.includes('--help')) {
+    console.log(`
+目录展平工具 - 类似 Array.flat() 但用于文件系统
+
+用法:
+  flatDir [选项] [目录] [深度]
+
+参数:
+  目录        要展平的目录路径 (默认: 当前目录)
+  深度        展平深度，支持正数、-1 或 'Infinity' (默认: 1)
+
+选项:
+  -d, --dry-run    试运行模式，只显示将要执行的操作，不实际修改文件
+  -h, --help       显示帮助信息
+
+示例:
+  flatDir                    # 展平当前目录，深度为 1
+  flatDir . 2                # 展平当前目录，深度为 2
+  flatDir ./test Infinity    # 完全展平 test 目录
+  flatDir . -1               # 从末端向上展平 1 层
+  flatDir -d . 1             # 试运行，查看将要执行的操作
+
+说明:
+  正数深度 - 从顶部向下展平:
+  - 深度 1: 将所有子目录的内容提升一层
+  - 深度 2: 将所有孙目录的内容也提升到父目录
+  - Infinity: 将所有嵌套内容全部移动到顶层目录
+
+  正数示例 (深度为 1):
+    before: a/b/c/file.txt
+    after:  a/c/file.txt (b 目录被展平)
+
+  负数深度 - 只支持 -1:
+  - 深度 -1: 只展平叶子目录（没有子目录的目录）
+  - 将叶子目录中的文件向上移动一层到父目录
+  - 有子目录的目录不受影响
+
+  负数示例 (深度为 -1):
+    原始结构:
+      a/b/c/d/file1.txt  (d 是叶子目录，没有子目录)
+      a/b/c/file2.txt    (c 不是叶子目录，因为有子目录 d)
+      a/e/file3.txt      (e 是叶子目录)
+      x/y/z/file4.txt    (z 是叶子目录)
+    
+    执行 flatDir . -1 后:
+      a/b/c/file1.txt    (从叶子目录 d 移到父目录 c)
+      a/b/c/file2.txt    (c 不是叶子目录，不动)
+      a/file3.txt        (从叶子目录 e 移到父目录 a)
+      x/y/file4.txt      (从叶子目录 z 移到父目录 y)
+`);
+    process.exit(0);
+  }
+
+  const dryRun = args.includes('-d') || args.includes('--dry-run');
+  
+  // 过滤掉选项标志，但保留负数（负数不是选项，是深度参数）
+  const nonFlagArgs = args.filter(arg => {
+    if (arg === '-d' || arg === '--dry-run') return false;
+    // 如果以 - 开头但后面紧跟数字，说明是负数，不是选项
+    if (arg.startsWith('-')) {
+      const num = parseInt(arg, 10);
+      return !isNaN(num); // 如果能解析成数字，就保留（负数）
+    }
+    return true;
+  });
+
+  let targetDir = '.';
+  let depth = 1;
+
+  if (nonFlagArgs.length > 0) {
+    targetDir = nonFlagArgs[0];
+  }
+
+  if (nonFlagArgs.length > 1) {
+    if (nonFlagArgs[1].toLowerCase() === 'infinity') {
+      depth = Infinity;
+    } else {
+      depth = parseInt(nonFlagArgs[1], 10);
+      if (isNaN(depth)) {
+        console.error('错误: 深度必须是整数或 "Infinity"');
+        process.exit(1);
+      }
+      if (depth < -1) {
+        console.error('错误: 负数深度只支持 -1');
+        process.exit(1);
+      }
+    }
+  }
+
+  return { targetDir, depth, dryRun };
+}
+
+// 主函数
+function main() {
+  const { targetDir, depth, dryRun } = parseArgs();
+  
+  try {
+    flattenDirectory(targetDir, depth, dryRun);
+  } catch (error) {
+    console.error(`错误: ${error.message}`);
+    process.exit(1);
+  }
+}
+
+main();
