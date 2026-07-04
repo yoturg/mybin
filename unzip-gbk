@@ -1,0 +1,74 @@
+#!/usr/bin/env python3
+# 解压 GBK 编码的 zip（常见于 Windows 制作的中文压缩包）
+# 支持：GBK 文件名修正 + AES 加密（WinZip 格式）+ GBK 密码编码
+#
+# 用法：
+#   unzip-gbk <文件.zip> [密码]
+#
+# 密码可选；有密码时会以 GBK 编码传递给 AES 解密，匹配 Windows 的行为。
+# 解压目录为 zip 文件同名目录（去掉 .zip 后缀）。
+
+import sys
+import os
+import shutil
+
+def usage():
+    print('用法: unzip-gbk <文件.zip> [密码]')
+    print('      密码可选，如有密码会以 GBK 编码传递')
+    sys.exit(1)
+
+def fix_name(s):
+    """将 cp437 误读的 GBK 文件名还原为正确的中文。"""
+    try:
+        return s.encode('cp437').decode('gbk')
+    except Exception:
+        return s
+
+def main():
+    if len(sys.argv) < 2 or sys.argv[1] in ('-h', '--help'):
+        usage()
+
+    zip_path = sys.argv[1]
+    raw_pwd  = sys.argv[2] if len(sys.argv) > 2 else None
+
+    if not os.path.isfile(zip_path):
+        print(f'错误：文件不存在：{zip_path}', file=sys.stderr)
+        sys.exit(1)
+
+    try:
+        import pyzipper
+    except ImportError:
+        print('错误：未安装 pyzipper，请先运行：pip3 install pyzipper', file=sys.stderr)
+        sys.exit(1)
+
+    out_dir = os.path.splitext(os.path.basename(zip_path))[0]
+    os.makedirs(out_dir, exist_ok=True)
+    root = os.path.abspath(out_dir) + os.sep
+
+    with pyzipper.AESZipFile(zip_path, 'r') as zf:
+        if raw_pwd:
+            zf.setpassword(raw_pwd.encode('gbk'))
+
+        for info in zf.infolist():
+            name = fix_name(info.filename)
+            dest = os.path.normpath(os.path.join(out_dir, name.lstrip('/').replace('\\', '/')))
+
+            # 防路径穿越
+            if not (dest + os.sep).startswith(root) and dest + os.sep != root:
+                print(f'  跳过（路径穿越）: {name}', file=sys.stderr)
+                continue
+
+            if name.endswith('/'):
+                os.makedirs(dest, exist_ok=True)
+            else:
+                par = os.path.dirname(dest)
+                if par:
+                    os.makedirs(par, exist_ok=True)
+                with zf.open(info) as src, open(dest, 'wb') as dst:
+                    shutil.copyfileobj(src, dst, 1 << 20)  # 1 MB 分块，支持大文件
+                print(f'✓ {name}')
+
+    print(f'\n解压到 → {out_dir}/')
+
+if __name__ == '__main__':
+    main()

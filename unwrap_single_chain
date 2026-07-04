@@ -1,0 +1,49 @@
+#!/bin/bash
+
+# 用法: ./unwrap_single_chain.sh [-r]
+# -r: 递归处理
+# 默认: 只处理一轮
+
+recursive=0
+while getopts "r" opt; do
+    case $opt in
+        r) recursive=1 ;;
+        *) echo "用法: $0 [-r]"; exit 1 ;;
+    esac
+done
+
+process_once() {
+    local changed=0
+
+    while IFS= read -r leaf; do
+        # 统计叶子目录下的文件数（不含子目录）
+        file_count=0
+        single_file=""
+        for item in "$leaf"/*; do
+            [[ -f "$item" ]] && ((file_count++)) && single_file="$item"
+        done
+
+        # 叶子目录下恰好只有一个文件
+        if [[ $file_count -eq 1 ]]; then
+            parent=$(dirname "$leaf")
+            echo "处理: '$single_file' -> '$parent/'"
+            mv "$single_file" "$parent/"
+            rm -rf "$leaf"
+            changed=1
+        fi
+
+    done < <(find . -mindepth 2 -type d | awk -F'/' '{print NF, $0}' | sort -rn | cut -d' ' -f2-)
+
+    return $changed
+}
+
+if [[ $recursive -eq 1 ]]; then
+    while true; do
+        process_once
+        [[ $? -eq 0 ]] && break
+    done
+else
+    process_once
+fi
+
+echo "完成"
