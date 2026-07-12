@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// 顺序解压目录下所有 zip / 7z / rar / tar.*（按文件头魔数识别，不依赖后缀名）；成功后删除压缩包。
+// 顺序解压目录下所有 zip / 7z / rar / tar.* / wim / Bandizip SFX（按文件头魔数识别，不依赖后缀名）；成功后删除压缩包。
 // 根目录固定为调用时的当前工作目录；密码由命令行传入；多个密码时对每个压缩包依次尝试直至成功。
 //
 // 用法：
@@ -18,7 +18,7 @@ const { spawnSync } = require('child_process');
 
 // ── 用法帮助 ──────────────────────────────────────────────────
 function usage() {
-  console.log(`顺序解压目录下 zip / 7z / rar / tar.*（按文件头识别，不依赖后缀名）；成功后删除压缩包。
+  console.log(`顺序解压目录下 zip / 7z / rar / tar.* / wim / Bandizip SFX（按文件头识别，不依赖后缀名）；成功后删除压缩包。
 根目录固定为当前工作目录；密码由参数传入；多个密码时对每个压缩包按顺序逐一尝试直至成功。
 
 用法：
@@ -83,6 +83,29 @@ function fmtDuration(ms) {
   return `${s}s`;
 }
 
+// ── Bandizip SFX 识别 ─────────────────────────────────────────
+// 文件头为 PE（MZ），内嵌 ZIP 数据；stub 内通常含 "BANDIZIPSFX" 标记。
+// 同目录多个纯数字命名（001、002…）时 7z 会误判为分卷，解压时需加 -tzip。
+const BANDIZIP_SFX_MARK = Buffer.from('BANDIZIPSFX');
+
+function isBandizipSfx(filePath) {
+  let fd;
+  try {
+    fd = fs.openSync(filePath, 'r');
+    const head = Buffer.alloc(2);
+    if (fs.readSync(fd, head, 0, 2, 0) < 2) return false;
+    if (head[0] !== 0x4d || head[1] !== 0x5a) return false; // MZ
+    const scanSize = Math.min(400 * 1024, fs.fstatSync(fd).size);
+    const scan = Buffer.alloc(scanSize);
+    fs.readSync(fd, scan, 0, scanSize, 0);
+    return scan.includes(BANDIZIP_SFX_MARK);
+  } catch (_) {
+    return false;
+  } finally {
+    if (fd !== undefined) try { fs.closeSync(fd); } catch (_) { /* ignore */ }
+  }
+}
+
 // ── 魔数识别（与 7z 支持格式一致） ───────────────────────────
 // 读 512 字节（一个 tar block）：
 //   前 8 字节覆盖 zip/7z/rar/gzip/bzip2/xz/zstd；
@@ -96,6 +119,9 @@ function isArchiveMagic(filePath) {
     const n = fs.readSync(fd, buf, 0, 512, 0);
     if (n < 4) return false;
     const hex = buf.slice(0, Math.min(n, 8)).toString('hex');
+    if (hex.startsWith('4d5a')) return isBandizipSfx(filePath); // Bandizip SFX（PE stub + 内嵌 zip）
+    if (hex.startsWith('4d5357494d')) return true; // WIM (MSWIM)
+    if (hex.startsWith('57494d53')) return true;  // Split WIM 分卷 (WIMS)
     if (hex.startsWith('504b0304') || hex.startsWith('504b0506') || hex.startsWith('504b0708')) return true; // ZIP
     if (hex.startsWith('377abcaf271c')) return true; // 7z
     if (hex.startsWith('526172211a07')) return true; // RAR4 / RAR5
@@ -167,6 +193,15 @@ function volumePrimaryPath(archive) {
   const dir = path.dirname(archive);
   const base = path.basename(archive);
 
+  // Split WIM：name.wim + name2.swm + name3.swm …
+  if (/\.swm$/i.test(base)) {
+    const m = base.match(/^(.+?)(\d+)\.swm$/i);
+    if (m) {
+      const wimFile = path.join(dir, `${m[1]}.wim`);
+      if (fs.existsSync(wimFile)) return wimFile;
+    }
+  }
+
   // 7z 分卷：name.7z.001
   if (/\.7z\.[0-9]+$/i.test(base)) {
     const stem = base.replace(/\.[0-9]+$/, ''); // name.7z
@@ -221,6 +256,20 @@ function volumePrimaryPath(archive) {
 function volumeGroupFiles(primary) {
   const dir = path.dirname(primary);
   const base = path.basename(primary);
+
+  // Split WIM：name.wim + name2.swm + name3.swm …
+  if (/\.wim$/i.test(base)) {
+    const stem = base.replace(/\.wim$/i, '');
+    const result = [path.join(dir, base)];
+    const swmRe = new RegExp(`^${stem.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(\\d+)\\.swm$`, 'i');
+    readdirSafe(dir)
+      .filter(f => {
+        const m = f.match(swmRe);
+        return m && parseInt(m[1], 10) >= 2;
+      })
+      .forEach(f => result.push(path.join(dir, f)));
+    return result;
+  }
 
   // 7z 分卷
   if (/\.7z\.[0-9]+$/i.test(base)) {
@@ -328,24 +377,52 @@ const deduped = [...primarySet].sort();
 
 const total = deduped.length;
 if (total === 0) {
-  console.log(`在「${root}」下未发现文件头为 ZIP / 7z / RAR / tar.* 的压缩包（不看后缀名）。`);
+  console.log(`在「${root}」下未发现文件头为 ZIP / 7z / RAR / tar.* / WIM / Bandizip SFX 的压缩包（不看后缀名）。`);
   process.exit(0);
 }
 
 // ── 阶段 2：解压 ──────────────────────────────────────────────
-function run7zExtract(archive, outDir) {
+function run7zExtract(archive, outDir, opts = {}) {
+  const typeArgs = opts.type ? [`-t${opts.type}`] : [];
   if (passwords.length === 0) {
-    const r = spawnSync('7z', ['x', '-y', `-o${outDir}/`, '--', archive], { stdio: 'inherit' });
+    const r = spawnSync('7z', ['x', '-y', ...typeArgs, `-o${outDir}/`, '--', archive], { stdio: 'inherit' });
     return r.status === 0;
   }
   for (let i = 0; i < passwords.length; i++) {
     if (passwords.length > 1) console.log(`  尝试第 ${i + 1}/${passwords.length} 个密码…`);
-    const r = spawnSync('7z', ['x', '-y', `-p${passwords[i]}`, `-o${outDir}/`, '--', archive], { stdio: 'inherit' });
+    const r = spawnSync('7z', ['x', '-y', ...typeArgs, `-p${passwords[i]}`, `-o${outDir}/`, '--', archive], { stdio: 'inherit' });
     if (r.status === 0) return true;
   }
   console.error(`  已尝试全部 ${passwords.length} 个密码，解压仍失败。`);
   return false;
 }
+
+// ── unrar 可用性检查（懒加载，只检测一次）────────────────────
+let _unrarOk = null;
+function checkUnrar() {
+  if (_unrarOk !== null) return _unrarOk;
+  const r = spawnSync('unrar', [], { encoding: 'utf8' });
+  // unrar 无参数时输出帮助并以非 0 退出，但不会 error（找不到命令才 error）
+  _unrarOk = !r.error;
+  return _unrarOk;
+}
+
+// ── unrar 解压（支持 RAR4 / RAR5 所有压缩算法）───────────────
+function runUnrarExtract(archive, outDir) {
+  // unrar x -y -o+ [-pPASSWORD] archive outdir/
+  if (passwords.length === 0) {
+    const r = spawnSync('unrar', ['x', '-y', '-o+', archive, outDir + '/'], { stdio: 'inherit' });
+    return r.status === 0;
+  }
+  for (let i = 0; i < passwords.length; i++) {
+    if (passwords.length > 1) console.log(`  尝试第 ${i + 1}/${passwords.length} 个密码…`);
+    const r = spawnSync('unrar', ['x', '-y', '-o+', `-p${passwords[i]}`, archive, outDir + '/'], { stdio: 'inherit' });
+    if (r.status === 0) return true;
+  }
+  console.error(`  已尝试全部 ${passwords.length} 个密码，解压仍失败。`);
+  return false;
+}
+
 
 // ── pyzipper 可用性检查（懒加载，只检测一次）──────────────────
 let _pyzipperOk = null;
@@ -482,18 +559,207 @@ sys.exit(1)
   }
 }
 
-// ── 解压路由：GBK zip → pyzipper；其他 → 7z ──────────────────
+// ── gzip fname 读取 ───────────────────────────────────────────
+// 解析 gzip 文件头（RFC 1952），返回 fname 字段的原始字节（Buffer）；
+// 若无 fname 字段或解析失败则返回 null。
+function readGzipFname(filePath) {
+  let fd;
+  try {
+    fd = fs.openSync(filePath, 'r');
+    const hdr = Buffer.alloc(10);
+    if (fs.readSync(fd, hdr, 0, 10, 0) < 10) return null;
+    if (hdr[0] !== 0x1f || hdr[1] !== 0x8b) return null; // 不是 gzip
+    const flg = hdr[3];
+    let pos = 10;
+
+    if (flg & 0x04) { // FEXTRA
+      const xlenBuf = Buffer.alloc(2);
+      if (fs.readSync(fd, xlenBuf, 0, 2, pos) < 2) return null;
+      pos += 2 + xlenBuf.readUInt16LE(0);
+    }
+
+    if (!(flg & 0x08)) return null; // 无 FNAME 字段
+
+    // 读 null-terminated fname（最多 512 字节）
+    const nameBuf = Buffer.alloc(512);
+    const n = fs.readSync(fd, nameBuf, 0, 512, pos);
+    const nullIdx = nameBuf.indexOf(0x00, 0);
+    if (nullIdx < 0 || nullIdx > n) return nameBuf.slice(0, n);
+    return nameBuf.slice(0, nullIdx);
+  } catch (_) {
+    return null;
+  } finally {
+    if (fd !== undefined) try { fs.closeSync(fd); } catch (_) {}
+  }
+}
+
+// 检测 gzip fname 是否含 GBK 高字节（>= 0x81）
+function isGbkGzip(filePath) {
+  const fname = readGzipFname(filePath);
+  if (!fname || fname.length === 0) return false;
+  for (let i = 0; i < fname.length; i++) {
+    if (fname[i] >= 0x81) return true;
+  }
+  return false;
+}
+
+// ── Python gzip 解压（GBK 文件名修正）────────────────────────
+function runPythonGzipExtract(archive, outDir) {
+  const tmpScript = path.join(os.tmpdir(), `gbkgzip_${process.pid}.py`);
+  const pyScript = `\
+import sys, os, gzip, shutil
+
+gz_path = sys.argv[1]
+out_dir  = sys.argv[2]
+
+# 解析 gzip 头取 fname 字节
+fname_bytes = b''
+with open(gz_path, 'rb') as f:
+    if f.read(2) != b'\\x1f\\x8b':
+        print('不是 gzip 文件', file=sys.stderr)
+        sys.exit(1)
+    f.read(1)          # CM
+    flg = f.read(1)[0] # FLG
+    f.read(6)          # MTIME + XFL + OS
+    if flg & 0x04:     # FEXTRA
+        xlen = int.from_bytes(f.read(2), 'little')
+        f.read(xlen)
+    if flg & 0x08:     # FNAME
+        while True:
+            b = f.read(1)
+            if not b or b == b'\\x00':
+                break
+            fname_bytes += b
+
+if fname_bytes:
+    try:
+        outname = fname_bytes.decode('gbk')
+    except Exception:
+        outname = fname_bytes.decode('latin1', errors='replace')
+else:
+    base = os.path.basename(gz_path)
+    outname = base[:-3] if base.lower().endswith('.gz') else base
+
+os.makedirs(out_dir, exist_ok=True)
+dest = os.path.join(out_dir, outname)
+with gzip.open(gz_path, 'rb') as src, open(dest, 'wb') as dst:
+    shutil.copyfileobj(src, dst, 1 << 20)
+print('  提取: ' + outname, flush=True)
+`;
+  try {
+    fs.writeFileSync(tmpScript, pyScript, 'utf8');
+    const r = spawnSync('python3', [tmpScript, archive, outDir], { stdio: 'inherit' });
+    return r.status === 0;
+  } finally {
+    try { fs.unlinkSync(tmpScript); } catch (_) {}
+  }
+}
+
+// ── tar GBK 检测 ──────────────────────────────────────────────
+// 遍历 tar 条目的文件名字段（最多检查 30 个条目），
+// 若发现 GBK 高字节（>= 0x81）则返回 true。
+function isGbkTar(filePath) {
+  let fd;
+  try {
+    fd = fs.openSync(filePath, 'r');
+    const block = Buffer.alloc(512);
+    let pos = 0;
+    for (let checked = 0; checked < 30; checked++) {
+      if (fs.readSync(fd, block, 0, 512, pos) < 512) break;
+      pos += 512;
+
+      // 全零块 = 归档结束
+      let allZero = true;
+      for (let i = 0; i < 8; i++) { if (block[i] !== 0) { allZero = false; break; } }
+      if (allZero) break;
+
+      // 文件名字段：bytes 0-99（null 终止）
+      const nullIdx = block.indexOf(0x00, 0);
+      const nameLen = nullIdx < 0 ? 100 : Math.min(nullIdx, 100);
+      for (let i = 0; i < nameLen; i++) {
+        if (block[i] >= 0x81) return true;
+      }
+
+      // 跳过数据块（size 在 bytes 124-135，八进制 ASCII）
+      const sizeStr = block.slice(124, 136).toString('latin1').replace(/[\0 ]/g, '');
+      const fileSize = sizeStr.length > 0 ? parseInt(sizeStr, 8) : 0;
+      if (!isNaN(fileSize) && fileSize > 0) {
+        pos += Math.ceil(fileSize / 512) * 512;
+      }
+    }
+    return false;
+  } catch (_) {
+    return false;
+  } finally {
+    if (fd !== undefined) try { fs.closeSync(fd); } catch (_) {}
+  }
+}
+
+// ── Python tar 解压（GBK 文件名修正）────────────────────────
+function runPythonTarExtract(archive, outDir) {
+  const tmpScript = path.join(os.tmpdir(), `gbktar_${process.pid}.py`);
+  const pyScript = `\
+import sys, os, tarfile, shutil
+
+tar_path = sys.argv[1]
+out_dir  = sys.argv[2]
+os.makedirs(out_dir, exist_ok=True)
+root = os.path.abspath(out_dir) + os.sep
+
+with tarfile.open(tar_path, 'r', encoding='gbk', errors='surrogateescape') as tf:
+    for member in tf.getmembers():
+        name = member.name.replace('\\\\\\\\', '/')
+        dest = os.path.normpath(os.path.join(out_dir, name.lstrip('/')))
+        if not (dest + os.sep).startswith(root) and dest + os.sep != root:
+            continue
+        if member.isdir():
+            os.makedirs(dest, exist_ok=True)
+        elif member.isfile():
+            par = os.path.dirname(dest)
+            if par:
+                os.makedirs(par, exist_ok=True)
+            with tf.extractfile(member) as src, open(dest, 'wb') as dst:
+                shutil.copyfileobj(src, dst, 1 << 20)
+            print('  提取: ' + member.name, flush=True)
+`;
+  try {
+    fs.writeFileSync(tmpScript, pyScript, 'utf8');
+    const r = spawnSync('python3', [tmpScript, archive, outDir], { stdio: 'inherit' });
+    return r.status === 0;
+  } finally {
+    try { fs.unlinkSync(tmpScript); } catch (_) {}
+  }
+}
+
+// ── 解压路由：GBK zip → pyzipper；GBK gzip → python gzip；GBK tar → python tar；其他 → 7z ──
 function extractArchive(archive, outDir) {
-  // 只对 zip 格式做 GBK 检测（magic: PK\x03\x04）
-  const isZip = (() => {
-    try {
-      const buf = Buffer.alloc(4);
-      const fd = fs.openSync(archive, 'r');
-      fs.readSync(fd, buf, 0, 4, 0);
-      fs.closeSync(fd);
-      const h = buf.toString('hex');
-      return h.startsWith('504b0304') || h.startsWith('504b0506') || h.startsWith('504b0708');
-    } catch (_) { return false; }
+  // 读文件头 512 字节，兼顾 tar 格式（需要 512 字节才能做 ustar / V7 校验）
+  let magic512 = Buffer.alloc(0);
+  try {
+    const buf = Buffer.alloc(512);
+    const fd = fs.openSync(archive, 'r');
+    const n = fs.readSync(fd, buf, 0, 512, 0);
+    fs.closeSync(fd);
+    magic512 = buf.slice(0, n);
+  } catch (_) {}
+
+  const magic4 = magic512.slice(0, 4).toString('hex');
+  const isZip  = magic4.startsWith('504b0304') || magic4.startsWith('504b0506') || magic4.startsWith('504b0708');
+  const isGzip = magic4.startsWith('1f8b');
+  const isRar  = magic4.startsWith('5261');   // RAR4: 526172211a0700  RAR5: 526172211a070100
+  // RAR4: magic 第 7 字节（index 6）= 0x00；RAR5: = 0x01
+  const isRar4 = isRar && magic512.length >= 7 && magic512[6] === 0x00;
+
+  // 判断是否为 plain tar（ustar 或 V7 校验和）
+  const isTar = (() => {
+    if (magic512.length >= 262 && magic512.slice(257, 262).toString('latin1') === 'ustar') return true;
+    if (magic512.length >= 512) {
+      let sum = 0;
+      for (let i = 0; i < 512; i++) sum += (i >= 148 && i < 156) ? 0x20 : magic512[i];
+      const storedStr = magic512.slice(148, 156).toString('latin1').replace(/[\0 ]/g, '');
+      if (storedStr.length > 0 && /^[0-7]+$/.test(storedStr) && parseInt(storedStr, 8) === sum) return true;
+    }
+    return false;
   })();
 
   if (isZip && isGbkZip(archive)) {
@@ -505,6 +771,31 @@ function extractArchive(archive, outDir) {
       console.log('  [GBK zip] 检测到 GBK 编码，但未安装 pyzipper（请运行：pip3 install pyzipper），回退 7z（文件名可能乱码）。');
     }
   }
+
+  if (isGzip && isGbkGzip(archive)) {
+    console.log('  [GBK gzip] 检测到 gzip fname 字段含 GBK 编码，使用 python3 修正文件名…');
+    if (runPythonGzipExtract(archive, outDir)) return true;
+    console.log('  [GBK gzip] python3 解压失败，回退 7z（文件名可能乱码）…');
+  }
+
+  if (isTar && isGbkTar(archive)) {
+    console.log('  [GBK tar] 检测到 tar 文件名含 GBK 编码，使用 python3 修正文件名…');
+    if (runPythonTarExtract(archive, outDir)) return true;
+    console.log('  [GBK tar] python3 解压失败，回退 7z（文件名可能乱码）…');
+  }
+
+  if (isRar && checkUnrar()) {
+    const label = isRar4 ? 'RAR4' : 'RAR5';
+    console.log(`  [${label}] 使用 unrar 解压…`);
+    if (runUnrarExtract(archive, outDir)) return true;
+    console.log(`  [${label}] unrar 失败，回退 7z…`);
+  }
+
+  if (isBandizipSfx(archive)) {
+    console.log('  [Bandizip SFX] 使用 7z -tzip 解压（避免同目录多个 SFX 被误判为分卷）…');
+    return run7zExtract(archive, outDir, { type: 'zip' });
+  }
+
   return run7zExtract(archive, outDir);
 }
 

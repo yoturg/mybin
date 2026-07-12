@@ -1,0 +1,174 @@
+#!/usr/bin/env node
+// 批量重命名当前目录下的子文件 / 子目录：对名称执行 name.replace(a, b)。
+//
+// 用法：
+//   replace-name <a> [b]       仅处理当前目录下一级
+//   replace-name -d <a> [b]    递归处理所有子目录
+//   replace-name -n <a> [b]    预览模式，只打印不重命名
+//
+//   a  必填，待替换的子串
+//   b  可选，替换为的子串（省略时视为空字符串，即删除 a）
+
+'use strict';
+
+const fs = require('fs');
+const path = require('path');
+
+function usage() {
+  console.log(`批量重命名子文件 / 子目录：对名称执行 name.replace(a, b)。
+
+用法：
+  replace-name <a> [b]       仅处理当前目录下一级（默认）
+  replace-name -d <a> [b]    递归处理所有子目录
+  replace-name -n <a> [b]    预览模式，只打印不重命名
+  replace-name -h | --help   显示帮助
+
+选项：
+  -d, --deep     递归处理所有子目录
+  -n, --dry-run  预览模式，只打印不重命名
+
+参数：
+  a  必填，待替换的子串
+  b  可选，替换为的子串（省略时视为 ""，即删除 a）
+
+示例：
+  replace-name old new        # foo_old.txt → foo_new.txt
+  replace-name " " _         # "a b.txt" → "a_b.txt"
+  replace-name -d tmp         # 递归删除名称中的 "tmp"
+  replace-name -n old new     # 预览重命名效果
+  replace-name copy           # 删除名称中的 "copy"`);
+}
+
+function parseArgs(argv) {
+  const args = argv.slice(2);
+  let recursive = false;
+  let dryRun = false;
+  const positional = [];
+
+  for (const arg of args) {
+    if (arg === '-d' || arg === '--deep') {
+      recursive = true;
+    } else if (arg === '-n' || arg === '--dry-run') {
+      dryRun = true;
+    } else if (arg === '-h' || arg === '--help') {
+      usage();
+      process.exit(0);
+    } else {
+      positional.push(arg);
+    }
+  }
+
+  if (positional.length < 1) {
+    console.error('错误：缺少必填参数 a（待替换的子串）。');
+    usage();
+    process.exit(1);
+  }
+
+  const from = positional[0];
+  const to = positional.length > 1 ? positional[1] : '';
+
+  return { from, to, recursive, dryRun };
+}
+
+function newName(name, from, to) {
+  return name.replace(from, to);
+}
+
+function collectEntries(root, recursive) {
+  const entries = [];
+
+  function walk(dir) {
+    let items;
+    try {
+      items = fs.readdirSync(dir, { withFileTypes: true });
+    } catch (err) {
+      console.error(`读取目录失败: ${dir} — ${err.message}`);
+      return;
+    }
+
+    for (const item of items) {
+      const fullPath = path.join(dir, item.name);
+      entries.push({ dir, name: item.name, isDirectory: item.isDirectory() });
+      if (recursive && item.isDirectory()) {
+        walk(fullPath);
+      }
+    }
+  }
+
+  walk(root);
+  return entries;
+}
+
+function renameEntry(dir, oldName, newNameStr, dryRun) {
+  const oldPath = path.join(dir, oldName);
+  const newPath = path.join(dir, newNameStr);
+
+  if (!fs.existsSync(oldPath)) {
+    return { ok: false, reason: '源路径不存在' };
+  }
+  if (fs.existsSync(newPath)) {
+    return { ok: false, reason: '目标已存在' };
+  }
+
+  if (dryRun) {
+    return { ok: true };
+  }
+
+  try {
+    fs.renameSync(oldPath, newPath);
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, reason: err.message };
+  }
+}
+
+function main() {
+  const { from, to, recursive, dryRun } = parseArgs(process.argv);
+  const root = process.cwd();
+
+  if (dryRun) {
+    console.log('【预览模式】只打印，不实际重命名。');
+  }
+
+  console.log(`目录: ${root}`);
+  console.log(`规则: name.replace(${JSON.stringify(from)}, ${JSON.stringify(to)})`);
+  console.log(`范围: ${recursive ? '递归' : '当前一级'}`);
+  console.log('-----------------------------------');
+
+  const entries = collectEntries(root, recursive);
+
+  // 目录自底向上重命名，避免父目录改名后影响遍历路径
+  entries.sort((a, b) => {
+    const depthA = path.join(a.dir, a.name).split(path.sep).length;
+    const depthB = path.join(b.dir, b.name).split(path.sep).length;
+    return depthB - depthA;
+  });
+
+  let renamed = 0;
+  let skipped = 0;
+
+  for (const { dir, name, isDirectory } of entries) {
+    const fixed = newName(name, from, to);
+    if (fixed === name) continue;
+
+    const relOld = path.relative(root, path.join(dir, name)) || name;
+    const relNew = path.relative(root, path.join(dir, fixed)) || fixed;
+    const kind = isDirectory ? '目录' : '文件';
+
+    const result = renameEntry(dir, name, fixed, dryRun);
+    if (result.ok) {
+      const prefix = dryRun ? '[预览] ' : '';
+      console.log(`${prefix}${kind}: ${relOld} → ${relNew}`);
+      renamed++;
+    } else {
+      console.log(`跳过 ${kind}: ${relOld} — ${result.reason}`);
+      skipped++;
+    }
+  }
+
+  console.log('-----------------------------------');
+  const action = dryRun ? '将重命名' : '已重命名';
+  console.log(`完成：${action} ${renamed} 个，跳过 ${skipped} 个。`);
+}
+
+main();

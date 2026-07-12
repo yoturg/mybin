@@ -1,0 +1,193 @@
+#!/usr/bin/env python3
+"""
+fix-enc — 修正目录 / 文件名中因「Shift-JIS 字节被误作 GBK 解码」产生的乱码。
+
+原理：
+  RAR 打包时，如果操作系统是中文 Windows（GBK 码页），把 Shift-JIS 的字节序列
+  直接当作 GBK 解读并存入压缩包，解压后文件名就会出现汉字形状的乱码。
+  本脚本对每个文件/目录名尝试 encode('gbk').decode('shift_jis')，
+  通过三重启发式条件判断是否属于此类乱码，若是则重命名。
+
+用法：
+  fix-enc [路径 ...]       对指定路径（文件或目录）递归处理，默认当前目录
+  fix-enc -n [路径 ...]    干跑（dry-run），只打印不重命名
+  fix-enc -h               显示帮助
+"""
+
+import sys
+import os
+
+# ── 编码判断工具 ──────────────────────────────────────────────
+
+def can_encode(s, enc):
+    try:
+        s.encode(enc)
+        return True
+    except (UnicodeEncodeError, LookupError):
+        return False
+
+def has_halfwidth_kana(s):
+    """半角片假名 U+FF65–U+FF9F（Shift-JIS 转 GBK 的典型假阳性特征）"""
+    return any('\uff65' <= c <= '\uff9f' for c in s)
+
+def has_fullwidth_kana(s):
+    """全角平/片假名 U+3040–U+30FF"""
+    return any('\u3040' <= c <= '\u30ff' for c in s)
+
+def fix_gbk_sjis(s):
+    """
+    若 s 是「Shift-JIS 字节被误作 GBK 解码」的乱码，返回修正后字符串；
+    否则返回原字符串。
+
+    三重保险：
+      1. encode('gbk').decode('shift_jis') 成功且结果不同
+      2. 修正结果不含半角片假名（排除中文字符被误转的假阳性）
+      3a. 原串不能 Shift-JIS 编码，但修正后能（核心判据）
+      3b. 或修正后新增全角假名（备用判据）
+    """
+    try:
+        fixed = s.encode('gbk').decode('shift_jis')
+    except (UnicodeEncodeError, UnicodeDecodeError):
+        return s
+    if fixed == s:
+        return s
+    # 条件3a 是最强判据：原串无法 sjis 编码但修正后可以，说明确实是 GBK 误读 Shift-JIS，
+    # 此时即使结果含半角片假名（Shift-JIS 本身支持半角片假名）也应信任转换结果。
+    if not can_encode(s, 'shift_jis') and can_encode(fixed, 'shift_jis'):
+        return fixed
+    # 条件3a 不满足时，若结果含半角片假名则视为误转（中文字符被错误解读的假阳性）
+    if has_halfwidth_kana(fixed):
+        return s
+    if has_fullwidth_kana(fixed) and not has_fullwidth_kana(s):
+        return fixed
+    return s
+
+# ── 递归重命名（自底向上，先处理子目录再处理父目录）──────────
+
+def process_tree(root, dry_run):
+    renamed = 0
+    skipped = 0
+
+    for dirpath, dirnames, filenames in os.walk(root, topdown=False):
+        # 文件
+        for fname in filenames:
+            fixed = fix_gbk_sjis(fname)
+            if fixed == fname:
+                continue
+            old = os.path.join(dirpath, fname)
+            new = os.path.join(dirpath, fixed)
+            if not os.path.exists(old):
+                continue
+            if os.path.exists(new):
+                print(f'  跳过（目标已存在）: {fname!r}', flush=True)
+                skipped += 1
+                continue
+            print(f'  {fname!r}', flush=True)
+            print(f'    → {fixed!r}', flush=True)
+            if not dry_run:
+                try:
+                    os.rename(old, new)
+                    renamed += 1
+                except OSError as e:
+                    print(f'    ✗ 重命名失败: {e}', flush=True)
+                    skipped += 1
+            else:
+                renamed += 1
+
+        # 目录（跳过根节点自身，避免把传入路径也重命名）
+        if dirpath == root:
+            continue
+        bname = os.path.basename(dirpath)
+        fixed_d = fix_gbk_sjis(bname)
+        if fixed_d == bname:
+            continue
+        parent = os.path.dirname(dirpath)
+        old = dirpath
+        new = os.path.join(parent, fixed_d)
+        if not os.path.exists(old):
+            continue
+        if os.path.exists(new):
+            print(f'  跳过目录（目标已存在）: {bname!r}', flush=True)
+            skipped += 1
+            continue
+        print(f'  {bname!r}', flush=True)
+        print(f'    → {fixed_d!r}', flush=True)
+        if not dry_run:
+            try:
+                os.rename(old, new)
+                renamed += 1
+            except OSError as e:
+                print(f'    ✗ 重命名失败: {e}', flush=True)
+                skipped += 1
+        else:
+            renamed += 1
+
+    return renamed, skipped
+
+# ── 单个文件处理 ──────────────────────────────────────────────
+
+def process_file(path_arg, dry_run):
+    parent = os.path.dirname(os.path.abspath(path_arg))
+    fname  = os.path.basename(path_arg)
+    fixed  = fix_gbk_sjis(fname)
+    if fixed == fname:
+        return 0, 0
+    new = os.path.join(parent, fixed)
+    if os.path.exists(new):
+        print(f'  跳过（目标已存在）: {fname!r}', flush=True)
+        return 0, 1
+    print(f'  {fname!r}', flush=True)
+    print(f'    → {fixed!r}', flush=True)
+    if not dry_run:
+        try:
+            os.rename(path_arg, new)
+            return 1, 0
+        except OSError as e:
+            print(f'    ✗ 重命名失败: {e}', flush=True)
+            return 0, 1
+    return 1, 0
+
+# ── 入口 ─────────────────────────────────────────────────────
+
+def main():
+    args = sys.argv[1:]
+    dry_run = False
+    paths = []
+
+    for a in args:
+        if a in ('-h', '--help'):
+            print(__doc__)
+            sys.exit(0)
+        elif a in ('-n', '--dry-run'):
+            dry_run = True
+        else:
+            paths.append(a)
+
+    if not paths:
+        paths = [os.getcwd()]
+
+    if dry_run:
+        print('【干跑模式】只打印，不实际重命名。')
+
+    total_renamed = 0
+    total_skipped = 0
+
+    for p in paths:
+        p = os.path.abspath(p)
+        if not os.path.exists(p):
+            print(f'路径不存在，跳过: {p}', file=sys.stderr)
+            continue
+
+        print(f'\n处理: {p}')
+        if os.path.isdir(p):
+            r, s = process_tree(p, dry_run)
+        else:
+            r, s = process_file(p, dry_run)
+        total_renamed += r
+        total_skipped += s
+
+    action = '将重命名' if dry_run else '已重命名'
+    print(f'\n完成：{action} {total_renamed} 个，跳过 {total_skipped} 个。')
+
+if __name__ == '__main__':
+    main()
